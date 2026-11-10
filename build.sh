@@ -3,7 +3,8 @@
 #
 #   ./build.sh            build into ./build/CoffeeControl.app
 #   ./build.sh install    build, copy to ~/Applications, register the extension
-#   ./build.sh clean      remove ./build
+#   ./build.sh dist       universal (arm64 + x86_64) build, zipped into ./dist
+#   ./build.sh clean      remove ./build and ./dist
 #
 # Needs the macOS 26 SDK: Xcode 26, or Command Line Tools for Xcode 26.x.
 # Environment:
@@ -11,6 +12,7 @@
 #                       "Apple Development: ..." identity if ad-hoc signing is
 #                       not enough for Control Center.
 #   INSTALL_DIR         default ~/Applications
+#   ARCHS               architectures to build, default: this Mac's
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -23,8 +25,7 @@ EXT_ID="$APP_ID.Control"
 VERSION="0.1.0"
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 DEPLOYMENT="26.0"
-ARCH="$(uname -m)"
-TRIPLE="$ARCH-apple-macos$DEPLOYMENT"
+ARCHS="${ARCHS:-$(uname -m)}"
 IDENTITY="${CODESIGN_IDENTITY:--}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/Applications}"
 
@@ -54,17 +55,25 @@ compile() {
   local flags=()
   while [[ "$1" != "--" ]]; do flags+=("$1"); shift; done
   shift
-  mkdir -p "$objdir" "$(dirname "$out")"
-  # Const values feed the App Intents metadata processor (see gen_metadata).
-  xcrun swiftc \
-    -sdk "$SDK" -target "$TRIPLE" \
-    -module-name "$module" -parse-as-library \
-    -swift-version 6 -O -whole-module-optimization \
-    -emit-const-values-path "$objdir/$module.swiftconstvalues" \
-    -Xfrontend -const-gather-protocols-file \
-    -Xfrontend "$ROOT/Support/appintents-protocols.json" \
-    "${flags[@]}" \
-    -o "$out" "$@"
+  mkdir -p "$(dirname "$out")"
+  local arch slices=()
+  for arch in $ARCHS; do
+    mkdir -p "$objdir/$arch"
+    # Const values feed the App Intents metadata (see gen_metadata).
+    xcrun swiftc \
+      -sdk "$SDK" -target "$arch-apple-macos$DEPLOYMENT" \
+      -module-name "$module" -parse-as-library \
+      -swift-version 6 -O -whole-module-optimization \
+      -emit-const-values-path "$objdir/$arch/$module.swiftconstvalues" \
+      -Xfrontend -const-gather-protocols-file \
+      -Xfrontend "$ROOT/Support/appintents-protocols.json" \
+      "${flags[@]}" \
+      -o "$objdir/$arch/$module" "$@"
+    slices+=("$objdir/$arch/$module")
+  done
+  # The const values are the same for every architecture.
+  cp "$objdir/${ARCHS%% *}/$module.swiftconstvalues" "$objdir/$module.swiftconstvalues"
+  lipo -create "${slices[@]}" -output "$out"
 }
 
 # Writes Contents/Resources/Metadata.appintents. Without it the system does not
@@ -121,6 +130,8 @@ plist() {
 
 build() {
   check_sdk
+  TRIPLE="${ARCHS%% *}-apple-macos$DEPLOYMENT"
+  say "architectures: $ARCHS"
   rm -rf "$APP" "$OBJ"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" \
            "$EXT/Contents/MacOS" "$EXT/Contents/Resources"
@@ -206,9 +217,21 @@ Next:
 EOF
 }
 
+# Zip for a GitHub release. ditto keeps the bundle's signature and symlinks intact.
+dist_zip() {
+  local zip="$ROOT/dist/$APP_NAME-$VERSION.zip"
+  mkdir -p "$ROOT/dist"
+  rm -f "$zip"
+  ditto -c -k --sequesterRsrc --keepParent "$APP" "$zip"
+  say "app: $(lipo -archs "$APP/Contents/MacOS/$APP_NAME"), extension: $(lipo -archs "$EXT/Contents/MacOS/$EXT_NAME")"
+  say "$zip"
+  shasum -a 256 "$zip"
+}
+
 case "${1:-build}" in
   build) build ;;
   install) build; install_app ;;
-  clean) rm -rf "$BUILD" ;;
-  *) die "usage: $0 [build|install|clean]" ;;
+  dist) ARCHS="arm64 x86_64"; build; dist_zip ;;
+  clean) rm -rf "$BUILD" "$ROOT/dist" ;;
+  *) die "usage: $0 [build|install|dist|clean]" ;;
 esac

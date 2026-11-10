@@ -6,6 +6,34 @@ A replacement for keeping a terminal open with `caffeinate -d -i`.
 - On: `cup.and.heat.waves.fill` (cup with steam), sleep is prevented.
 - Off: `cup.and.saucer` (empty cup), normal sleep behavior.
 
+## Install
+
+Requires macOS 26 (Tahoe) or later, Apple Silicon or Intel.
+
+1. Download `CoffeeControl-<version>.zip` from
+   [Releases](https://github.com/Gronck2/coffee-control/releases), unzip it and move
+   `CoffeeControl.app` to `/Applications` (or `~/Applications`).
+2. The app is ad-hoc signed and not notarized (that needs a paid Apple Developer
+   account), so Gatekeeper blocks it at first. Allow it once:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/CoffeeControl.app
+   ```
+
+   Or: double-click the app, close the "not opened" dialog, then System Settings →
+   Privacy & Security → "Open Anyway".
+3. Open the app once. Nothing appears: it is a background agent with no window or Dock
+   icon. This registers the control with macOS.
+4. Control Center → Edit Controls → search "Coffee" → drag the cup in. If the search
+   finds nothing, open the widget gallery once (right-click the desktop → Edit
+   Widgets…) and try again.
+
+To check that it works: turn the cup on and run `pmset -g assertions | grep -i coffee`.
+You should see two "Coffee Control: keep this Mac awake" lines.
+
+Uninstall: `open coffeecontrol://quit`, delete `CoffeeControl.app`, and remove
+`~/Library/Application Support/coffee-control`.
+
 ## How it works
 
 ```
@@ -80,7 +108,8 @@ What `build.sh` does:
   the extension with `pluginkit` and stops a running extension process. Otherwise chronod
   keeps running the old binary.
 
-Other commands: `./build.sh` (build only), `./build.sh clean`.
+Other commands: `./build.sh` (build only), `./build.sh dist` (universal arm64 + x86_64
+build zipped into `dist/` for a release), `./build.sh clean`.
 
 ## Manual control and debugging
 
